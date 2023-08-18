@@ -68,7 +68,7 @@ namespace BugsnagNetworking
         // Post
         public static BugsnagUnityWebRequest Post(string uri, string postData)
         {
-            return new BugsnagUnityWebRequest(UnityWebRequest.PostWwwForm(uri, postData));
+            return new BugsnagUnityWebRequest(UnityWebRequest.Post(uri, postData));
         }
 
         public static BugsnagUnityWebRequest Post(string uri, WWWForm formData)
@@ -88,7 +88,7 @@ namespace BugsnagNetworking
 
         public static BugsnagUnityWebRequest Post(Uri uri, string postData)
         {
-            return new BugsnagUnityWebRequest(UnityWebRequest.PostWwwForm(uri, postData));
+            return new BugsnagUnityWebRequest(UnityWebRequest.Post(uri, postData));
         }
 
         public static BugsnagUnityWebRequest Post(Uri uri, WWWForm formData)
