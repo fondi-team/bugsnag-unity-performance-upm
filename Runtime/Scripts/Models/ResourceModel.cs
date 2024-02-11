@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -162,6 +162,9 @@ namespace BugsnagUnityPerformance
 
         private AttributeModel GetManufacturer()
         {
+            return new AttributeModel("device.manufacturer", BugsnagPerformance.GeoLocation);
+            
+            /*
             switch (Application.platform)
             {
                 case RuntimePlatform.OSXEditor:
@@ -174,6 +177,7 @@ namespace BugsnagUnityPerformance
                 case RuntimePlatform.WindowsPlayer:
                     return new AttributeModel("device.manufacturer", "PC");
             }
+            */
             return null;
         }
 
