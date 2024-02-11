@@ -100,6 +100,7 @@ namespace BugsnagUnityPerformance
             {
                 using (var client = new HttpClient())
                 {
+                    client.Timeout = TimeSpan.FromSeconds(3);
                     var res = await client.GetAsync("https://api.country.is/");
                     if (res.StatusCode == System.Net.HttpStatusCode.OK)
                     {
