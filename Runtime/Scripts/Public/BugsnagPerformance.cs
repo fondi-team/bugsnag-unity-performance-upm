@@ -3,6 +3,9 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
+using System.Net;
+using System.Net.Http;
+using System.Threading.Tasks;
 using BugsnagNetworking;
 using UnityEngine;
 using UnityEngine.Networking;
@@ -45,7 +48,7 @@ namespace BugsnagUnityPerformance
             public List<Span> Spans = new List<Span>();
         }
 
-        public static void Start(PerformanceConfiguration configuration)
+        public static async void Start(PerformanceConfiguration configuration)
         {
 #if BUGSNAG_DEBUG
             Logger.I("BugsnagPerformance.Start called");
@@ -68,6 +71,8 @@ namespace BugsnagUnityPerformance
 
             if (ReleaseStageEnabled(configuration))
             {
+                await GetGeoLocation();
+                
                 MainThreadDispatchBehaviour.Enqueue(() =>
                 {
                     CreateAppLifecycleListener();
@@ -76,6 +81,47 @@ namespace BugsnagUnityPerformance
                 _sharedInstance.Start();
 #if BUGSNAG_DEBUG
                 Logger.I("Start Complete");
+#endif
+            }
+        }
+
+        public static string GeoLocation { get; private set; } = "Unknown";
+
+        private class CountryIsResponse
+        {
+            public string ip;
+            public string country;
+            
+        }
+        
+        private static async Task GetGeoLocation()
+        {
+            try
+            {
+                using (var client = new HttpClient())
+                {
+                    var res = await client.GetAsync("https://api.country.is/");
+                    if (res.StatusCode == System.Net.HttpStatusCode.OK)
+                    {
+                        var body = await res.Content.ReadAsStringAsync();
+                        var json = JsonUtility.FromJson<CountryIsResponse>(body);
+                        GeoLocation = json.country;
+#if BUGSNAG_DEBUG
+                        Logger.I($"GetGeoLocation Succeeded: country={GeoLocation}");
+#endif
+                    }
+                    else
+                    {
+#if BUGSNAG_DEBUG
+                        Logger.I("GetGeoLocation Failed");
+#endif
+                    }
+                }
+            }
+            catch (Exception exception)
+            {
+#if BUGSNAG_DEBUG
+                Logger.I($"GetGeoLocation Failed: {exception.ToString()}");
 #endif
             }
         }
