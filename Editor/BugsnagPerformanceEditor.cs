@@ -9,6 +9,8 @@ public class BugsnagPerformanceEditor : EditorWindow
 
     public Texture DarkIcon, LightIcon;
 
+    bool _showEnabledMetrics;
+
     private void OnEnable()
     {
         titleContent.text = "BugSnag Performance";
@@ -87,11 +89,11 @@ public class BugsnagPerformanceEditor : EditorWindow
             EditorGUIUtility.labelWidth = 280;
             settings.UseNotifierSettings = EditorGUILayout.Toggle("Use BugSnag Error Monitoring SDK Settings", settings.UseNotifierSettings);
         }
-     
+
 
         if (!NotifierConfigAvaliable() || !settings.UseNotifierSettings)
         {
-            DrawStandaloneSettings(so,settings);
+            DrawStandaloneSettings(so, settings);
         }
 
         if (NotifierConfigAvaliable() && settings.UseNotifierSettings)
@@ -100,14 +102,51 @@ public class BugsnagPerformanceEditor : EditorWindow
         }
 
         EditorGUIUtility.labelWidth = 200;
+        DrawIntPropertyWithDefault(so, "AttributeArrayLengthLimit", "AttributeArrayLengthLimit", PerformanceConfiguration.DEFAULT_ATTRIBUTE_ARRAY_LENGTH_LIMIT);
+        DrawIntPropertyWithDefault(so, "AttributeCountLimit", "AttributeCountLimit", PerformanceConfiguration.DEFAULT_ATTRIBUTE_COUNT_LIMIT);
+        DrawIntPropertyWithDefault(so, "AttributeStringValueLimit", "AttributeStringValueLimit", PerformanceConfiguration.DEFAULT_ATTRIBUTE_STRING_VALUE_LIMIT);
         EditorGUILayout.PropertyField(so.FindProperty("AutoInstrumentAppStart"));
         EditorGUILayout.PropertyField(so.FindProperty("Endpoint"));
-
+        EditorGUILayout.PropertyField(so.FindProperty("ServiceName"));
+        EditorGUILayout.PropertyField(so.FindProperty("TracePropagationUrls"));
+        DrawEnabledMetricsDropdown(so, settings);
         EditorGUI.indentLevel--;
-
-
         so.ApplyModifiedProperties();
         EditorUtility.SetDirty(settings);
+    }
+
+    private void DrawEnabledMetricsDropdown(SerializedObject so, BugsnagPerformanceSettingsObject settings)
+    {
+        var style = new GUIStyle(GUI.skin.GetStyle("foldout"));
+        style.margin = new RectOffset(2, 0, 0, 0);
+        _showEnabledMetrics = EditorGUILayout.Foldout(_showEnabledMetrics, "Enabled Metrics", true, style);
+
+        if (_showEnabledMetrics)
+        {
+            EditorGUI.indentLevel += 2;
+            var enabledMetricsProp = so.FindProperty("EnabledMetrics");
+            var renderingProp = enabledMetricsProp.FindPropertyRelative("Rendering");
+            EditorGUILayout.PropertyField(renderingProp, new GUIContent("Rendering"));
+            renderingProp = enabledMetricsProp.FindPropertyRelative("CPU");
+            EditorGUILayout.PropertyField(renderingProp, new GUIContent("CPU"));
+            renderingProp = enabledMetricsProp.FindPropertyRelative("Memory");
+            EditorGUILayout.PropertyField(renderingProp, new GUIContent("Memory"));
+            EditorGUI.indentLevel -= 2;
+        }
+    }
+
+    private void DrawIntPropertyWithDefault(SerializedObject so, string propertyName, string label, int defaultValue)
+    {
+        var property = so.FindProperty(propertyName);
+        var isValueSet = property.intValue > 0;
+        if (!isValueSet)
+        {
+            property.intValue = EditorGUILayout.IntField(label, isValueSet ? property.intValue : defaultValue);
+        }
+        else
+        {
+            EditorGUILayout.PropertyField(property);
+        }
     }
 
     private void DrawStandaloneSettings(SerializedObject so, BugsnagPerformanceSettingsObject settings)

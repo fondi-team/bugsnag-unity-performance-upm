@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Security.Cryptography;
 using BugsnagNetworking;
@@ -6,19 +7,40 @@ using UnityEngine;
 
 namespace BugsnagUnityPerformance
 {
-    internal class SpanFactory
+    internal class SpanFactory : IPhasedStartup
     {
 
         [ThreadStatic]
-        private static Stack<ISpanContext> _contextStack;
-
+        private static Stack<WeakReference<ISpanContext>> _contextStack;
+        FrameMetricsCollector _frameMetricsCollector;
         private RNGCryptoServiceProvider _rNGCryptoServiceProvider = new RNGCryptoServiceProvider();
-
         private OnSpanEnd _onSpanEnd;
 
-        public SpanFactory(OnSpanEnd onSpanEnd)
+        private const string CONNECTION_TYPE_UNAVAILABLE = "unavailable";
+        private const string CONNECTION_TYPE_CELL = "cell";
+        private const string CONNECTION_TYPE_WIFI = "wifi";
+
+        private string _currentConnectionType = CONNECTION_TYPE_UNAVAILABLE;
+
+        private WaitForSeconds _connectionPollRate = new WaitForSeconds(1);
+
+        private int _maxCustomAttributes = PerformanceConfiguration.DEFAULT_ATTRIBUTE_COUNT_LIMIT;
+
+        public SpanFactory(OnSpanEnd onSpanEnd, FrameMetricsCollector frameMetricsCollector)
         {
             _onSpanEnd = onSpanEnd;
+            _frameMetricsCollector = frameMetricsCollector;
+            MainThreadDispatchBehaviour.Enqueue(GetConnectionType());
+        }
+
+        public void Configure(PerformanceConfiguration config)
+        {
+            // private property used here as this factory can be accessed before configure is called
+            _maxCustomAttributes = config.AttributeCountLimit;
+        }
+
+        public void Start()
+        {
         }
 
         private string GetNewTraceId()
@@ -51,59 +73,71 @@ namespace BugsnagUnityPerformance
 
         internal Span StartCustomSpan(string name, SpanOptions spanOptions)
         {
-            // custom spans are always first class
-            spanOptions.IsFirstClass = true;
+            spanOptions ??= new SpanOptions();
+            if (spanOptions.IsFirstClass == null)
+            {
+                spanOptions.IsFirstClass = true;
+            }
             var span = CreateSpan(name, SpanKind.SPAN_KIND_INTERNAL, spanOptions);
-            span.SetAttribute("bugsnag.span.category", "custom");
+            span.SetAttributeInternal("bugsnag.span.category", "custom");
             return span;
         }
 
         private Span CreateSpan(string name, SpanKind kind, SpanOptions spanOptions)
         {
-                        
+            string parentSpanId = null;
+            string traceId;
+            string spanId = GetNewSpanId();
+            // At this point span options should never be null
+            if (spanOptions.SpanMetrics == null)
+            {
+                spanOptions.SpanMetrics = new SpanMetrics();
+                spanOptions.SpanMetrics.Rendering = spanOptions.IsFirstClass ?? false;
+            }
             if (spanOptions.ParentContext != null)
             {
-                AddToContextStack(spanOptions.ParentContext);
-            }
-
-            string traceId = string.Empty;
-            string parentSpanId = null;
-            string spanId = GetNewSpanId();
-
-            var existingContext = GetCurrentContext();
-            if (existingContext != null)
-            {
-                traceId = existingContext.TraceId;
-                parentSpanId = existingContext.SpanId;
+                traceId = spanOptions.ParentContext.TraceId;
+                parentSpanId = spanOptions.ParentContext.SpanId;
             }
             else
             {
-                traceId = GetNewTraceId();
+                var existingContext = GetCurrentContext();
+                if (existingContext != null)
+                {
+                    traceId = existingContext.TraceId;
+                    parentSpanId = existingContext.SpanId;
+                }
+                else
+                {
+                    traceId = GetNewTraceId();
+                }
             }
 
-            var newSpan = new Span(name, kind, spanId, traceId, parentSpanId, spanOptions.StartTime, spanOptions.IsFirstClass, _onSpanEnd);
-
+            var newSpan = new Span(name, kind, spanId,
+            traceId, parentSpanId, spanOptions.StartTime,
+            spanOptions.IsFirstClass, _onSpanEnd, _maxCustomAttributes);
             if (spanOptions.MakeCurrentContext)
             {
                 AddToContextStack(newSpan);
             }
-
+            newSpan.SetAttributeInternal("net.host.connection.type", _currentConnectionType);
+            if (spanOptions.SpanMetrics != null && spanOptions.SpanMetrics.Rendering)
+            {
+                _frameMetricsCollector.OnSpanStart(newSpan);
+            }
             return newSpan;
         }
 
-        internal Span CreateAutomaticNetworkSpan(BugsnagUnityWebRequest request,string url)
+        internal Span CreateAutomaticNetworkSpan(BugsnagUnityWebRequest request, string url)
         {
             var verb = request.method.ToUpper();
-
             // as most code is running on the same thread and we want to avoid any spans
             // starting while the network call is inflight becoming children of the network span.
-            var spanOptions = new SpanOptions { MakeCurrentContext = false };
-
+            var spanOptions = new SpanOptions { MakeCurrentContext = false, IsFirstClass = true };
             var span = CreateSpan("HTTP/" + verb, SpanKind.SPAN_KIND_CLIENT, spanOptions);
-            span.SetAttribute("bugsnag.span.category", "network");
-            span.SetAttribute("http.url", url);
-            span.SetAttribute("http.method", verb);
-            span.SetAttribute("net.host.connection.type", GetConnectionType());
+            span.SetAttributeInternal("bugsnag.span.category", "network");
+            span.SetAttributeInternal("http.url", url);
+            span.SetAttributeInternal("http.method", verb);
             return span;
         }
 
@@ -118,28 +152,33 @@ namespace BugsnagUnityPerformance
             }
             else
             {
-                options = new SpanOptions { MakeCurrentContext = false };
+                options = new SpanOptions { MakeCurrentContext = false, IsFirstClass = true };
             }
             var span = CreateSpan("HTTP/" + httpVerb, SpanKind.SPAN_KIND_CLIENT, options);
-            span.SetAttribute("bugsnag.span.category", "network");
-            span.SetAttribute("http.url", url);
-            span.SetAttribute("http.method", httpVerb.ToString());
-            span.SetAttribute("net.host.connection.type", GetConnectionType());
+            span.SetAttributeInternal("bugsnag.span.category", "network");
+            span.SetAttributeInternal("http.url", url);
+            span.SetAttributeInternal("http.method", httpVerb.ToString());
             return span;
         }
 
-        private string GetConnectionType()
+        private IEnumerator GetConnectionType()
         {
-            switch (Application.internetReachability)
+            while (true)
             {
-                case NetworkReachability.NotReachable:
-                    return "unavailable";
-                case NetworkReachability.ReachableViaCarrierDataNetwork:
-                    return "cell";
-                case NetworkReachability.ReachableViaLocalAreaNetwork:
-                    return "wifi";
-                default:
-                    return string.Empty;
+                switch (Application.internetReachability)
+                {
+                    case NetworkReachability.NotReachable:
+                        _currentConnectionType = CONNECTION_TYPE_UNAVAILABLE;
+                        break;
+                    case NetworkReachability.ReachableViaCarrierDataNetwork:
+                        _currentConnectionType = CONNECTION_TYPE_CELL;
+                        break;
+                    case NetworkReachability.ReachableViaLocalAreaNetwork:
+                        _currentConnectionType = CONNECTION_TYPE_WIFI;
+                        break;
+
+                }
+                yield return _connectionPollRate;
             }
         }
 
@@ -163,13 +202,13 @@ namespace BugsnagUnityPerformance
                 options = new SpanOptions { IsFirstClass = true };
             }
             var span = CreateSpan("[ViewLoad/UnityScene]" + sceneName, SpanKind.SPAN_KIND_INTERNAL, options);
-            span.SetAttribute("bugsnag.span.category", "view_load");
-            span.SetAttribute("bugsnag.view.type", "UnityScene");
-            span.SetAttribute("bugsnag.view.name", sceneName);            
+            span.SetAttributeInternal("bugsnag.span.category", "view_load");
+            span.SetAttributeInternal("bugsnag.view.type", "UnityScene");
+            span.SetAttributeInternal("bugsnag.view.name", sceneName);
             return span;
         }
 
-        private ISpanContext GetCurrentContext()
+        internal ISpanContext GetCurrentContext()
         {
             if (_contextStack == null || _contextStack.Count == 0)
             {
@@ -178,36 +217,56 @@ namespace BugsnagUnityPerformance
 
             while (_contextStack.Count > 0)
             {
-                var top = (Span)_contextStack.Peek();
-                if (top.Ended)
+                var top = _contextStack.Peek();
+                if (top == null)
                 {
                     _contextStack.Pop();
+                    continue;
+                }
+                if (top.TryGetTarget(out var spanContext))
+                {
+                    if (((Span)spanContext).Ended)
+                    {
+                        _contextStack.Pop();
+                    }
+                    else
+                    {
+                        return spanContext;
+                    }
                 }
                 else
                 {
-                    return top;
+                    _contextStack.Pop();
+                    continue;
                 }
             }
 
             return null;
         }
 
+
         private void AddToContextStack(ISpanContext spanContext)
         {
             if (_contextStack == null)
             {
-                _contextStack = new Stack<ISpanContext>();
+                _contextStack = new Stack<WeakReference<ISpanContext>>();
             }
-            _contextStack.Push(spanContext);
+            _contextStack.Push(new WeakReference<ISpanContext>(spanContext));
         }
 
-        internal Span CreateAutoAppStartSpan(string name, string category)
+        internal Span CreateAutoAppStartSpan(string name, string category, bool isMainSppStartSpan)
         {
-            var span = CreateSpan(name, SpanKind.SPAN_KIND_CLIENT,new SpanOptions());
-            span.SetAttribute("bugsnag.span.category", category);
-            span.SetAttribute("bugsnag.app_start.type", "UnityRuntime");
+            var spanOptions = new SpanOptions
+            {
+                IsFirstClass = isMainSppStartSpan
+            };
+            var span = CreateSpan(name, SpanKind.SPAN_KIND_CLIENT, spanOptions);
+            span.SetAttributeInternal("bugsnag.span.category", category);
+            span.SetAttributeInternal("bugsnag.app_start.type", "UnityRuntime");
             span.IsAppStartSpan = true;
             return span;
         }
+
+
     }
 }

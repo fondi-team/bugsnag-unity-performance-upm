@@ -7,14 +7,15 @@ namespace BugsnagUnityPerformance
 {
     public class CacheManager : IPhasedStartup
     {
-        private int _maxPersistedBatchAgeSeconds;
+        private PerformanceConfiguration _config;
         private string _cacheDirectory;
         private string _deviceidFilePath;
         private string _persistentStateFilePath;
 
         private const string BATCH_FILE_SUFFIX = ".json";
 
-        public string PersistentStateFilePath  {
+        public string PersistentStateFilePath
+        {
             get
             {
                 return _persistentStateFilePath;
@@ -31,7 +32,7 @@ namespace BugsnagUnityPerformance
 
         public void Configure(PerformanceConfiguration config)
         {
-            _maxPersistedBatchAgeSeconds = config.MaxPersistedBatchAgeSeconds;
+            _config = config;
         }
 
         public void Start()
@@ -46,16 +47,24 @@ namespace BugsnagUnityPerformance
         {
             try
             {
-                if (File.Exists(_deviceidFilePath))
+                //if generateAnonymousId is true then store/report/generate else don't 
+                if (_config.GenerateAnonymousId)
                 {
-                    // return existing cached device id
-                    return File.ReadAllText(_deviceidFilePath);
-                }
+                    if (File.Exists(_deviceidFilePath))
+                    {
+                        // return existing cached device id
+                        return File.ReadAllText(_deviceidFilePath);
+                    }
 
-                // create and cache new random device id
-                var newDeviceId = Guid.NewGuid().ToString();
-                WriteFile(_deviceidFilePath, _deviceidFilePath);
-                return newDeviceId;
+                    // create and cache new random device id
+                    var newDeviceId = Guid.NewGuid().ToString();
+                    WriteFile(_deviceidFilePath, _deviceidFilePath);
+                    return newDeviceId;
+                }
+                else
+                {
+                    return string.Empty;
+                }
             }
             catch
             {
@@ -87,11 +96,13 @@ namespace BugsnagUnityPerformance
             foreach (var path in existingBatches)
             {
                 var id = Path.GetFileNameWithoutExtension(path);
-                try {
+                try
+                {
                     var stream = new FileStream(path, FileMode.Open, FileAccess.Read);
                     var payload = TracePayload.Deserialize(id, stream);
                     payloads.Add(payload);
-                } catch
+                }
+                catch
                 {
                     // Ignore
                 }
@@ -127,7 +138,7 @@ namespace BugsnagUnityPerformance
             {
                 var creationTime = File.GetCreationTimeUtc(path);
                 var timeSinceCreation = DateTimeOffset.UtcNow - creationTime;
-                if (timeSinceCreation.TotalSeconds > _maxPersistedBatchAgeSeconds)
+                if (timeSinceCreation.TotalSeconds > _config.MaxPersistedBatchAgeSeconds)
                 {
                     DeleteFile(path);
                 }

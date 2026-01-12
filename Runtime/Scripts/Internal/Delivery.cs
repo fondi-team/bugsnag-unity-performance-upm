@@ -14,14 +14,11 @@ namespace BugsnagUnityPerformance
 
     internal class Delivery : IPhasedStartup
     {
-        private string _endpoint;
-        private string _apiKey;
         private OnProbabilityChanged _onProbabilityChanged;
-
         private bool _flushingCache;
-
         private ResourceModel _resourceModel;
         private CacheManager _cacheManager;
+        private PerformanceConfiguration _config;
 
         private enum RequestResult
         {
@@ -36,7 +33,8 @@ namespace BugsnagUnityPerformance
 
         private static RequestResult GetRequestResult(UnityWebRequest req)
         {
-            switch (req.responseCode) {
+            switch (req.responseCode)
+            {
                 case 200:
                 case 202:
                     return RequestResult.Success;
@@ -58,8 +56,7 @@ namespace BugsnagUnityPerformance
 
         public void Configure(PerformanceConfiguration config)
         {
-            _endpoint = config.Endpoint;
-            _apiKey = config.ApiKey;
+            _config = config;
         }
 
         public void Start()
@@ -69,8 +66,8 @@ namespace BugsnagUnityPerformance
 
         public void Deliver(List<Span> batch)
         {
-            var payload = new TracePayload(_resourceModel, batch);
-            MainThreadDispatchBehaviour.Instance().Enqueue(PushToServer(payload, OnTraceDeliveryCompleted));
+            var payload = new TracePayload(_resourceModel, batch, _config.IsFixedSamplingProbability, _config.AttributeArrayLengthLimit, _config.AttributeStringValueLimit);
+            MainThreadDispatchBehaviour.Enqueue(PushToServer(payload, OnTraceDeliveryCompleted));
         }
 
         private void OnTraceDeliveryCompleted(TracePayload payload, UnityWebRequest req, double newProbability)
@@ -99,8 +96,8 @@ namespace BugsnagUnityPerformance
             {
                 onResponse = OnPValueRequestCompleted;
             }
-            var payload = new TracePayload(_resourceModel, null);
-            MainThreadDispatchBehaviour.Instance().Enqueue(PushToServer(payload, onResponse));
+            var payload = TracePayload.GetTracePayloadForPValueRequest(_resourceModel);
+            MainThreadDispatchBehaviour.Enqueue(PushToServer(payload, onResponse));
         }
 
         private void OnPValueRequestCompleted(TracePayload payload, UnityWebRequest req, double newProbability)
@@ -122,7 +119,8 @@ namespace BugsnagUnityPerformance
             else
             {
                 var bodyReady = false;
-                new Thread(() => {
+                new Thread(() =>
+                {
                     body = Encoding.ASCII.GetBytes(payload.GetJsonBody());
                     bodyReady = true;
                 }).Start();
@@ -134,13 +132,13 @@ namespace BugsnagUnityPerformance
                 yield break;
             }
 
-            using (var req = new UnityWebRequest(_endpoint))
+            using (var req = new UnityWebRequest(_config.GetEndpoint()))
             {
                 foreach (var header in payload.Headers)
                 {
                     req.SetRequestHeader(header.Key, header.Value);
                 }
-                req.SetRequestHeader("Bugsnag-Api-Key", _apiKey);
+                req.SetRequestHeader("Bugsnag-Api-Key", _config.ApiKey);
                 req.SetRequestHeader("Content-Type", "application/json");
                 req.SetRequestHeader("Bugsnag-Integrity", "sha1 " + Hash(body));
                 req.SetRequestHeader("Bugsnag-Sent-At", DateTimeOffset.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture));
@@ -173,7 +171,7 @@ namespace BugsnagUnityPerformance
                 var probabilityStr = req.GetResponseHeader("Bugsnag-Sampling-Probability");
                 if (probabilityStr != null)
                 {
-                    return Convert.ToDouble(probabilityStr);
+                    return double.Parse(probabilityStr, CultureInfo.InvariantCulture);
                 }
             }
             catch
@@ -189,7 +187,7 @@ namespace BugsnagUnityPerformance
                 return;
             }
             _flushingCache = true;
-            MainThreadDispatchBehaviour.Instance().Enqueue(DoFlushCache());
+            MainThreadDispatchBehaviour.Enqueue(DoFlushCache());
         }
 
         private IEnumerator DoFlushCache()

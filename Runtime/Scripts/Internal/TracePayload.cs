@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Text;
 using Newtonsoft.Json;
 using System.Linq;
+using System.Globalization;
 
 namespace BugsnagUnityPerformance
 {
@@ -11,7 +12,7 @@ namespace BugsnagUnityPerformance
     {
 
         public string PayloadId;
-        public SortedList<double, int> SamplingHistogram { get;  private set; }
+        public SortedList<double, int> SamplingHistogram { get; private set; }
         public Dictionary<string, string> Headers { get; private set; } = new Dictionary<string, string>();
 
         private ResourceModel _resourceModel;
@@ -19,7 +20,7 @@ namespace BugsnagUnityPerformance
 
         private string _jsonbody;
 
-        public TracePayload(ResourceModel resourceModel, List<Span> spans)
+        public TracePayload(ResourceModel resourceModel, List<Span> spans, bool isFixedSamplingProbability, int attributeArrayLengthLimit, int attributeStringValueLimit)
         {
             _resourceModel = resourceModel;
             if (spans != null && spans.Count > 0)
@@ -28,15 +29,26 @@ namespace BugsnagUnityPerformance
                 PayloadId = Guid.NewGuid().ToString();
                 foreach (var span in spans)
                 {
-                    _spans.Add(new SpanModel(span));
+                    _spans.Add(new SpanModel(span, attributeArrayLengthLimit, attributeStringValueLimit));
                 }
                 SamplingHistogram = CalculateSamplingHistorgram(spans);
-                Headers["Bugsnag-Span-Sampling"] = BuildSamplingHistogramHeader(this);
+                if (!isFixedSamplingProbability)
+                {
+                    Headers["Bugsnag-Span-Sampling"] = BuildSamplingHistogramHeader(this);
+                }
             }
             else
             {
-                Headers["Bugsnag-Span-Sampling"] = "1:0";
+                if (!isFixedSamplingProbability)
+                {
+                    Headers["Bugsnag-Span-Sampling"] = "1:0";
+                }
             }
+        }
+
+        internal static TracePayload GetTracePayloadForPValueRequest(ResourceModel resourceModel)
+        {
+            return new TracePayload(resourceModel, null, false, 0, 0);
         }
 
         private TracePayload(Dictionary<string, string> headers, string cachedJson, string payloadId)
@@ -71,7 +83,8 @@ namespace BugsnagUnityPerformance
                 if (_spans == null)
                 {
                     return "{\"resourceSpans\": []}";
-                } else
+                }
+                else
                 {
                     var scopeSpans = new ScopeSpanModel[] { new ScopeSpanModel(_spans.ToArray()) };
                     var resourceSpans = new ResourceSpanModel[] { new ResourceSpanModel(_resourceModel, scopeSpans) };
@@ -84,7 +97,7 @@ namespace BugsnagUnityPerformance
                         NullValueHandling = NullValueHandling.Ignore
                     });
                 }
-            }            
+            }
             return _jsonbody;
         }
 
@@ -136,9 +149,9 @@ namespace BugsnagUnityPerformance
 
             foreach (KeyValuePair<double, int> pair in payload.SamplingHistogram)
             {
-                builder.Append(pair.Key);
+                builder.Append(pair.Key.ToString(CultureInfo.InvariantCulture));
                 builder.Append(':');
-                builder.Append(pair.Value);
+                builder.Append(pair.Value.ToString(CultureInfo.InvariantCulture));
                 builder.Append(';');
             }
             builder.Remove(builder.Length - 1, 1);

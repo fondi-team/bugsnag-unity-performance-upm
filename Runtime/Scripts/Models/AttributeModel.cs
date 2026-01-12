@@ -4,10 +4,13 @@
     public class AttributeModel
     {
         public string key;
-
         public AttributeValueModel value;
 
-        public AttributeModel() { }
+        public AttributeModel(string key, AttributeValueModel value)
+        {
+            this.key = key;
+            this.value = value;
+        }
 
         public AttributeModel(string key, string value)
         {
@@ -33,6 +36,7 @@
             this.value = new AttributeDoubleValueModel(value);
         }
     }
+
 
 }
 

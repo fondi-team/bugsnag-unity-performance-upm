@@ -4,7 +4,7 @@ using UnityEngine;
 
 namespace BugsnagUnityPerformance
 {
-    public class ResourceModel: IPhasedStartup
+    public class ResourceModel : IPhasedStartup
     {
         private CacheManager _cacheManager;
 
@@ -24,15 +24,19 @@ namespace BugsnagUnityPerformance
                 new AttributeModel("telemetry.sdk.version", Version.VersionString),
                 new AttributeModel("device.model.identifier", SystemInfo.deviceModel),
                 new AttributeModel("service.version", string.IsNullOrEmpty(config.AppVersion) ? Application.version : config.AppVersion),
+                new AttributeModel("service.name", GetServiceName(config)),
                 new AttributeModel("bugsnag.app.platform", GetPlatform()),
-                new AttributeModel("bugsnag.runtime_versions.unity", Application.unityVersion)
-               
+                new AttributeModel("bugsnag.runtime_versions.unity", Application.unityVersion),
+                new AttributeModel("os.type", GetOsType()),
+                new AttributeModel("os.name", GetOsName()),
+                new AttributeModel("device.screen_resolution.width", Screen.width),
+                new AttributeModel("device.screen_resolution.height", Screen.height)
             };
             AddNonNullAttribute(GetNativeVersionInfo(config));
             AddNonNullAttribute(GetManufacturer());
             AddNonNullAttribute(GetArch());
             AddNonNullAttribute(GetNativeOsVersion());
-            AddNonNullAttribute(GetAndroidSdkInt());
+            AddNonNullAttribute(GetAndroidSdk());
         }
 
         private void AddNonNullAttribute(AttributeModel attributeModel)
@@ -46,6 +50,21 @@ namespace BugsnagUnityPerformance
         public void Start()
         {
             attributes.Add(new AttributeModel("device.id", _cacheManager.GetDeviceId()));
+        }
+
+        private string GetServiceName(PerformanceConfiguration config)
+        {
+            if (!string.IsNullOrEmpty(config.ServiceName))
+            {
+                return config.ServiceName;
+            }
+
+            var name = string.IsNullOrEmpty(Application.identifier) ? Application.productName : Application.identifier;
+            if (string.IsNullOrEmpty(name))
+            {
+                return "unknown_service";
+            }
+            return name;
         }
 
         private string GetPlatform()
@@ -68,6 +87,30 @@ namespace BugsnagUnityPerformance
             return string.Empty;
         }
 
+        private string GetOsType()
+        {
+            switch (Application.platform)
+            {
+                case RuntimePlatform.IPhonePlayer:
+                    return "darwin";
+                case RuntimePlatform.Android:
+                    return "linux";
+            }
+            return string.Empty;
+        }
+
+        private string GetOsName()
+        {
+            switch (Application.platform)
+            {
+                case RuntimePlatform.IPhonePlayer:
+                    return "iOS";
+                case RuntimePlatform.Android:
+                    return "android";
+            }
+            return string.Empty;
+        }
+
         private AttributeModel GetNativeVersionInfo(PerformanceConfiguration config)
         {
             switch (Application.platform)
@@ -85,7 +128,7 @@ namespace BugsnagUnityPerformance
         {
             if (!string.IsNullOrEmpty(config.BundleVersion))
             {
-                return new AttributeModel("bugsnag.app.bundle_version",  config.BundleVersion);
+                return new AttributeModel("bugsnag.app.bundle_version", config.BundleVersion);
             }
             return new AttributeModel("bugsnag.app.bundle_version", Application.platform == RuntimePlatform.IPhonePlayer ? iOSNative.GetBundleVersion() : MacOSNative.GetBundleVersion());
         }
@@ -155,11 +198,11 @@ namespace BugsnagUnityPerformance
             return new AttributeModel("os.version", osVersion);
         }
 
-        private AttributeModel GetAndroidSdkInt()
+        private AttributeModel GetAndroidSdk()
         {
             if (Application.platform == RuntimePlatform.Android)
             {
-                return new AttributeModel("bugsnag.device.android_api_version", AndroidNative.GetAndroidSDKInt());
+                return new AttributeModel("bugsnag.device.android_api_version", AndroidNative.GetAndroidSDKInt().ToString());
             }
             return null;
         }
